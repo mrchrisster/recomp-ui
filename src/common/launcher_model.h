@@ -384,6 +384,7 @@ typedef struct {
     const char* rom_patch_note;
     const char* rom_patch_cache_dir;
     const char* rom_patch_required_sha1;
+    const char* rom_patch_source_sha1;
     char      rom_patch_status[256];
     char      rom_patch_prepared_path[512];
     char      rom_patch_prepared_sha1[41];
@@ -1173,6 +1174,8 @@ void launcher_model_setup_start_bios_regen(LauncherModel* m);
 // succeeded. Fingerprint mismatch is allowed here.
 bool launcher_model_can_finish_setup(const LauncherModel* m);
 // True when BIOS (if required) and ROM/disc are ready to launch (incl. fingerprint).
+/* Stock source image of a translation build that still needs its patch. */
+bool launcher_model_rom_needs_patch(const LauncherModel* m);
 bool launcher_model_can_launch(const LauncherModel* m);
 // True when the mounted disc is OK for online (TOC/cue policy + content).
 // Non-disc games (verify.mode!=1) always return true when netplay is supported.

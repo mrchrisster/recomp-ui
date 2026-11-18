@@ -22,6 +22,7 @@ typedef enum IpsPatchFormat {
     IPS_PATCH_CLASSIC,
     IPS_PATCH_IPS32,
     IPS_PATCH_BPS,
+    IPS_PATCH_UPS,
 } IpsPatchFormat;
 
 IpsPatchFormat ips_detect_format(const uint8_t* patch, size_t patch_len);
@@ -49,7 +50,13 @@ bool bps_apply(const uint8_t* src, size_t src_len,
                const uint8_t* patch, size_t patch_len,
                uint8_t** out_data, size_t* out_len);
 
-// Auto-detect and apply classic IPS, IPS32, or BPS1.
+// Apply a UPS1 (byuu) patch and verify all three CRC32s embedded in it. The
+// source size and checksum must match the patch's declared input exactly.
+bool ups_apply(const uint8_t* src, size_t src_len,
+               const uint8_t* patch, size_t patch_len,
+               uint8_t** out_data, size_t* out_len);
+
+// Auto-detect and apply classic IPS, IPS32, BPS1, or UPS1.
 bool rom_patch_apply(const uint8_t* src, size_t src_len,
                      const uint8_t* patch, size_t patch_len,
                      uint8_t** out_data, size_t* out_len);

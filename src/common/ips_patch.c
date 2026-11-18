@@ -30,6 +30,7 @@ IpsPatchFormat ips_detect_format(const uint8_t* patch, size_t patch_len) {
     if (patch_len >= 5 && memcmp(patch, "PATCH", 5) == 0) return IPS_PATCH_CLASSIC;
     if (patch_len >= 5 && memcmp(patch, "IPS32", 5) == 0) return IPS_PATCH_IPS32;
     if (memcmp(patch, "BPS1", 4) == 0) return IPS_PATCH_BPS;
+    if (memcmp(patch, "UPS1", 4) == 0) return IPS_PATCH_UPS;
     return IPS_PATCH_UNKNOWN;
 }
 
@@ -241,11 +242,62 @@ bool bps_apply(const uint8_t* src, size_t src_len,
     return true;
 }
 
+// UPS1: "UPS1", varint input size, varint output size, then records of
+// (varint skip, XOR bytes terminated by 0x00) up to a 12-byte CRC32 footer
+// (input, output, patch-without-final-crc). Varints share BPS's encoding.
+bool ups_apply(const uint8_t* src, size_t src_len,
+               const uint8_t* patch, size_t patch_len,
+               uint8_t** out_data, size_t* out_len) {
+    if (!out_data || !out_len || (src_len && !src) || !patch ||
+        patch_len < 4 + 2 + 12 || memcmp(patch, "UPS1", 4) != 0)
+        return false;
+    const size_t body_end = patch_len - 12;
+    const uint32_t expected_in_crc = bps_read_le32(patch + body_end);
+    const uint32_t expected_out_crc = bps_read_le32(patch + body_end + 4);
+    const uint32_t expected_patch_crc = bps_read_le32(patch + body_end + 8);
+    if (recompui_crc32_compute(patch, patch_len - 4) != expected_patch_crc)
+        return false;
+    size_t cursor = 4;
+    uint64_t in_size = 0, out_size = 0;
+    if (!bps_read_number(patch, body_end, &cursor, &in_size) ||
+        !bps_read_number(patch, body_end, &cursor, &out_size) ||
+        in_size != src_len || out_size > SIZE_MAX ||
+        recompui_crc32_compute(src, src_len) != expected_in_crc)
+        return false;
+    const size_t target_len = (size_t)out_size;
+    uint8_t* target = (uint8_t*)calloc(target_len ? target_len : 1, 1);
+    if (!target) return false;
+    memcpy(target, src, src_len < target_len ? src_len : target_len);
+    size_t pos = 0;
+    while (cursor < body_end) {
+        uint64_t skip = 0;
+        if (!bps_read_number(patch, body_end, &cursor, &skip) ||
+            skip > (uint64_t)(SIZE_MAX - pos)) { free(target); return false; }
+        pos += (size_t)skip;
+        for (;;) {
+            if (cursor >= body_end) { free(target); return false; }
+            const uint8_t x = patch[cursor++];
+            if (x == 0) { ++pos; break; }
+            if (pos >= target_len) { free(target); return false; }
+            target[pos++] ^= x;
+        }
+    }
+    if (recompui_crc32_compute(target, target_len) != expected_out_crc) {
+        free(target);
+        return false;
+    }
+    *out_data = target;
+    *out_len = target_len;
+    return true;
+}
+
 bool rom_patch_apply(const uint8_t* src, size_t src_len,
                      const uint8_t* patch, size_t patch_len,
                      uint8_t** out_data, size_t* out_len) {
     const IpsPatchFormat format = ips_detect_format(patch, patch_len);
     if (format == IPS_PATCH_BPS)
         return bps_apply(src, src_len, patch, patch_len, out_data, out_len);
+    if (format == IPS_PATCH_UPS)
+        return ups_apply(src, src_len, patch, patch_len, out_data, out_len);
     return ips_apply(src, src_len, patch, patch_len, out_data, out_len);
 }

@@ -957,10 +957,6 @@ static void draw_standalone_builtin_rom_picker(LauncherModel* m,
 // dashboard vs hug its content in the narrow stacked layout). Same pattern as
 // the other per-frame context globals below (g_th, g_pads).
 bool g_game_fill_h = false;
-// Visible dashboard height, independent of scrolling or AutoResizeY content.
-// Using a card's previous content height would keep hidden artwork from ever
-// returning when the user makes the window larger again.
-float g_game_visible_h = 0.0f;
 // SAVE (memory-card) fill-height: multitap (3+) only — cards stretch in a
 // reserved band under a scrolling controller stack. 2P hugs content; edge
 // inset comes from Child WindowPadding (same top/bottom as other panels).
@@ -2206,25 +2202,16 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         // Disc Selection label + combo + spacing, for a multi-image title.
         if (launcher_model_disc_count(m) > 1) reserve += px(62.0f);
         if (m->saves_supported) reserve += px(96.0f);    // compact SAVES row below Change ROM
-        if (m->password_save_path || m->password_sram_path)
-            reserve += px(96.0f);                      // password-save row (same footprint)
+        if (m->password_save_path) reserve += px(96.0f); // password-save row (same footprint)
         if (m->bios_name && launcher_model_bios_missing(m)) reserve += px(110.0f);  // "required" notice
         if (m->msu1_patch_available) reserve += px(198.0f);  // MSU-1 patch-available sub-block
                                                               // (title + up-to-3-line wrapped note + 2 stacked buttons)
-        if (builtin_file_picker_should_be_offered()) reserve += px(84.0f);
-        if (m->setup_error[0])
-            reserve += ImGui::CalcTextSize(m->setup_error, nullptr, false, availw).y
-                       + ImGui::GetStyle().ItemSpacing.y;
-        const float card_h = g_game_visible_h - ImGui::GetStyle().WindowPadding.y * 2.0f;
-        float art_h = card_h - reserve;
+        float art_h = ImGui::GetContentRegionAvail().y - reserve;
         if (art_h > px(368.0f)) art_h = px(368.0f);   // allow a larger hero box art (~15% bigger than before)
-        // Artwork yields to controls. Below a useful thumbnail size, omit it
-        // (and its spacer) instead of forcing the metadata below the fold.
-        if (art_h >= px(96.0f)) {
-            hero_boxart_centered(g_boxart, art_h, availw);
-            ImGui::Dummy(ImVec2(0, px(10)));
-        }
+        if (art_h < px(248.0f)) art_h = px(248.0f);   // keep it big enough to balance the side column
+        hero_boxart_centered(g_boxart, art_h, availw);
     }
+    ImGui::Dummy(ImVec2(0, px(10)));
 
     // Region + verification state, centered under the art.
     const char* noun = (m->rom_noun && m->rom_noun[0]) ? m->rom_noun : "ROM";
@@ -2241,6 +2228,12 @@ void draw_game_panel(LauncherModel* m, const LauncherTheme& th, bool fill_h = fa
         state_mark(verified, th);
         ImGui::SameLine(0, px(6));
         ImGui::TextColored(verified ? col(th.good) : col(th.warn), "%s", line);
+        if (launcher_model_rom_needs_patch(m)) {
+            const char* hint = ui_text("Stock ROM: add its patch under ROM Patch");
+            const float hw = ImGui::CalcTextSize(hint).x;
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availw - hw) * 0.5f);
+            ImGui::TextColored(col(th.warn), "%s", hint);
+        }
     }
     ImGui::Dummy(ImVec2(0, px(10)));
 
@@ -3551,7 +3544,6 @@ void panel_controller_draw(LauncherModel* m, const LauncherTheme* th) {
 // draw_save_row). A different system's profile simply contributes a
 // different panel list.
 void draw_dashboard(LauncherModel* m, const LauncherTheme& th, int logical_w) {
-    g_game_visible_h = ImGui::GetWindowHeight();
     const SystemProfile* prof = (const SystemProfile*)m->profile;
     const LauncherPanel* game_p = find_composed(prof->panels_dashboard, "game", m);
     const LauncherPanel* ctrl_p = find_composed(prof->panels_dashboard, "controller", m);
@@ -11188,9 +11180,7 @@ void draw_netplay(LauncherModel* m, const LauncherTheme& th) {
                 ImGui::TextColored(col(th.text_muted), "No");
             ImGui::TableSetColumnIndex(3);
             table_row_vcenter(lobby_row_h, text_h);
-            if (row.latency_ms >= 0 && row.latency_is_estimate)
-                ImGui::TextColored(col(th.text_muted), "~%d ms", row.latency_ms);
-            else if (row.latency_ms >= 0)
+            if (row.latency_ms >= 0)
                 ImGui::Text("%d ms", row.latency_ms);
             else
                 ImGui::TextColored(col(th.text_muted), "—");
@@ -12352,7 +12342,7 @@ static void draw_rom_patch(LauncherModel* m, const LauncherTheme& th) {
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - browse_w - clear_w -
                         px(8));
         if (ImGui::Button(ui_text("Browse..."), ImVec2(browse_w, px(28)))) {
-            ui_pick_file(m, "Select ROM patch", {"*.ips", "*.ips32", "*.bps"},
+            ui_pick_file(m, "Select ROM patch", {"*.ips", "*.ips32", "*.bps", "*.ups"},
                          "ROM patches", [m](const char* path) {
                              if (path) launcher_model_set_rom_patch(m, path);
                          });
@@ -14058,7 +14048,8 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
         const float right = ImGui::GetWindowContentRegionMax().x;
         const float y = hdr_top + px(6.0f);
         if (m->view == LNG_VIEW_DASHBOARD) {
-            const int count = 1 + (m->mods ? 1 : 0) +
+            const bool show_mods = m->mods || m->rom_patch_supported;
+            const int count = 1 + (show_mods ? 1 : 0) +
                               (m->has_assist_tools ? 1 : 0) +
                               ((m->credits_text && m->credits_text[0]) ? 1 : 0);
             const float w = px(110.0f);
@@ -14066,9 +14057,9 @@ void draw_ui(LauncherModel* m, const LauncherTheme& th, int logical_w, int logic
             ImGui::SetCursorPos(ImVec2(right - total, y));
             if (ImGui::Button(ui_text("Settings"), ImVec2(w, px(34))))
                 launcher_model_set_view(m, LNG_VIEW_SETTINGS);
-            if (m->mods) {
+            if (show_mods) {
                 ImGui::SameLine(0, gap);
-                if (ImGui::Button(ui_text("Mods"), ImVec2(w, px(34))))
+                if (ImGui::Button(ui_text(m->mods ? "Mods" : "ROM Patch"), ImVec2(w, px(34))))
                     launcher_model_set_view(m, LNG_VIEW_MODS);
             }
             if (m->has_assist_tools) {

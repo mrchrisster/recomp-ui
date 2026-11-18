@@ -101,10 +101,6 @@ typedef struct RecompLauncherCNetplayLobby {
     int  allow_spectators;
     int  max_spectators;
     int  spectator_count;
-    /* 1 when latency_ms is a through-the-server estimate rather than a timed
-     * direct link to the host (drawn with a "~"). 0 from a backend that
-     * predates the field, which reads as measured. */
-    int  latency_is_estimate;
 } RecompLauncherCNetplayLobby;
 
 /* One player connected to the lobby server, seated or just browsing -- the
@@ -1406,8 +1402,6 @@ struct RecompLauncherCSettings {
     // ABI stability.
     int  assist_fast_forward_multiplier;
 
-    /* Named host shortcuts are independent of settings_bindings: a host can
-     * retain its legacy gameplay binding store and still consume these. */
     int assist_key_bind[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
     int assist_pad_bind[RECOMP_LAUNCHER_MAX_ASSIST_BINDINGS];
 
@@ -2145,13 +2139,17 @@ typedef struct RecompLauncherCGameInfo {
     int assist_fast_forward_max;
 
     /* Optional general ROM-patch surface. recomp-ui applies classic IPS,
-     * IPS32, and checksum-verified BPS to a verified stock image. The cache
+     * IPS32, and checksum-verified BPS/UPS to a verified stock image. The cache
      * directory must already exist and should be owned by the host beside its
      * other mod data. NULL note uses the shared compatibility warning. */
     int rom_patch_supported;
     const char* rom_patch_note;
     const char* rom_patch_cache_dir;
     const char* rom_patch_required_sha1;
+    /* Translation builds that accept BOTH a stock source image (patched here)
+     * and an already-patched image: a ROM matching this SHA-1 may launch only
+     * with a ROM patch enabled. NULL keeps the original behavior. */
+    const char* rom_patch_source_sha1;
 
     /* ---- multi-image titles (appended additively) ------------------------
      * The roster of discs this build was made from, in disc order. When

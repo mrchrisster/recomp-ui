@@ -580,6 +580,7 @@ void launcher_model_init(LauncherModel* m,
         m->rom_patch_note       = game->rom_patch_note;
         m->rom_patch_cache_dir  = game->rom_patch_cache_dir;
         m->rom_patch_required_sha1 = game->rom_patch_required_sha1;
+        m->rom_patch_source_sha1 = game->rom_patch_source_sha1;
 #if RECOMP_UI_ENABLE_MODS
         m->mods                 = game->mods;
 #else
@@ -3009,11 +3010,21 @@ bool launcher_model_can_finish_setup(const LauncherModel* m) {
     return true;
 }
 
+bool launcher_model_rom_needs_patch(const LauncherModel* m) {
+    return m && m->rom_present && m->rom_patch_source_sha1 &&
+           m->rom_patch_source_sha1[0] && m->rom_sha1_hex[0] &&
+           strcmp(m->rom_sha1_hex, m->rom_patch_source_sha1) == 0 &&
+           !(m->rom_patch_supported && m->s.rom_patch_enabled &&
+             m->s.rom_patch_path[0]);
+}
+
 bool launcher_model_can_launch(const LauncherModel* m) {
     if (!m) return false;
     if (!m->rom_present || strcmp(m->rom_size, "--") == 0) return false;
     if (m->rom_patch_supported && m->s.rom_patch_enabled &&
         !m->s.rom_patch_path[0]) return false;
+    if (launcher_model_rom_needs_patch(m))
+        return false;   /* stock source image needs its patch first */
     if (m->profile && m->profile->verify.mode == 1) {
         /* Disc systems: reject none/bad; warn (2) and ok (1) are playable. */
         if (m->verify.verdict == 0 || m->verify.verdict == 3) return false;
@@ -4152,11 +4163,22 @@ bool launcher_model_prepare_rom_patch(LauncherModel* m) {
     recompui_sha1_compute(output, output_len, output_sha);
     recompui_sha1_hex(output_sha, output_hex);
     free(patch);
-    if (m->rom_patch_required_sha1 && m->rom_patch_required_sha1[0] &&
-        strcmp(output_hex, m->rom_patch_required_sha1) != 0) {
+    bool patch_sha_ok = !m->rom_patch_required_sha1 || !m->rom_patch_required_sha1[0] ||
+                        strcmp(output_hex, m->rom_patch_required_sha1) == 0;
+    if (!patch_sha_ok && m->known_sha1_hex) {
+        for (size_t k = 0; k < m->num_known_sha1; ++k) {
+            if (m->known_sha1_hex[k] &&
+                (!m->rom_patch_source_sha1 || strcmp(m->known_sha1_hex[k], m->rom_patch_source_sha1) != 0) &&
+                strcmp(output_hex, m->known_sha1_hex[k]) == 0) {
+                patch_sha_ok = true;
+                break;
+            }
+        }
+    }
+    if (!patch_sha_ok) {
         free(output);
-        safe_copy(m->rom_patch_status, sizeof(m->rom_patch_status),
-                  "This executable was built for a different patch release.");
+        snprintf(m->rom_patch_status, sizeof(m->rom_patch_status),
+                 "Patched ROM SHA-1 %.40s is unsupported by this build.", output_hex);
         return false;
     }
     snprintf(m->s.rom_patch_crc32, sizeof(m->s.rom_patch_crc32), "%08x",
@@ -4484,7 +4506,7 @@ void launcher_model_map_all_advance(LauncherModel* m) {
 }
 void launcher_model_begin_assist_capture(LauncherModel* m, int action,
                                          bool gamepad) {
-    if (!m || action < 0 ||
+    if (!m->settings_bindings || action < 0 ||
         action >= m->assist_binding_count)
         return;
     m->hk_capturing = false;
@@ -4538,7 +4560,7 @@ void launcher_model_reset_player_bindings(LauncherModel* m, int player) {
            sizeof m->s.player_pad_bind[player]);
 }
 void launcher_model_reset_assist_bindings(LauncherModel* m) {
-    if (!m) return;
+    if (!m || !m->settings_bindings) return;
     memcpy(m->s.assist_key_bind, m->default_assist_key_bind,
            sizeof m->s.assist_key_bind);
     memcpy(m->s.assist_pad_bind, m->default_assist_pad_bind,
